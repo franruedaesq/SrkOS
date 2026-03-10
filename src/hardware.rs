@@ -232,8 +232,14 @@ mod tests {
         let mut i2c = AlwaysOkI2c;
         let hw = block_on(probe_hardware(&mut i2c));
         assert!(hw.oled, "OLED should be detected on a fully-loaded board");
-        assert!(hw.camera, "Camera should be detected on a fully-loaded board");
-        assert!(hw.audio, "Audio codec should be detected on a fully-loaded board");
+        assert!(
+            hw.camera,
+            "Camera should be detected on a fully-loaded board"
+        );
+        assert!(
+            hw.audio,
+            "Audio codec should be detected on a fully-loaded board"
+        );
     }
 
     #[test]

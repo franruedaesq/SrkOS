@@ -153,7 +153,10 @@ mod tests {
             (br#"{"SetFaceExpression":"Happy"}"#, Expression::Happy),
             (br#"{"SetFaceExpression":"Sad"}"#, Expression::Sad),
             (br#"{"SetFaceExpression":"Neutral"}"#, Expression::Neutral),
-            (br#"{"SetFaceExpression":"Surprised"}"#, Expression::Surprised),
+            (
+                br#"{"SetFaceExpression":"Surprised"}"#,
+                Expression::Surprised,
+            ),
         ];
         for (payload, expected) in cases {
             assert_eq!(

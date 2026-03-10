@@ -19,6 +19,7 @@
 //! (`cargo test`) the std library is available so that the unit tests can
 //! use `std::panic` and the `futures` executor.
 #![cfg_attr(not(test), no_std)]
+#![deny(warnings)]
 
 pub mod hardware;
 pub mod ipc;

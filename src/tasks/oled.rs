@@ -20,9 +20,9 @@
 //! The task loop pulls [`Command::SetFaceExpression`] messages from
 //! [`COMMAND_BUS`] and updates [`OLED_FRAMEBUFFER`] accordingly.
 
-use crate::ipc::{Command, Expression};
 #[cfg(feature = "firmware")]
 use crate::ipc::COMMAND_BUS;
+use crate::ipc::{Command, Expression};
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -115,8 +115,7 @@ mod tests {
     #[test]
     fn framebuffer_constant_is_exactly_1kb() {
         assert_eq!(
-            FRAMEBUFFER_SIZE,
-            1024,
+            FRAMEBUFFER_SIZE, 1024,
             "SSD1306 128×64 1-bit framebuffer must be exactly 1 024 bytes"
         );
     }

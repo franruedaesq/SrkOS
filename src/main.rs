@@ -35,7 +35,7 @@
 //!
 //! # Memory guarantees
 //!
-//! * `#![no_alloc]` -- the heap is never touched.
+//! * `#![no_std]` -- the heap is never touched (no allocator is linked).
 //! * All buffers (RX/TX network, OLED framebuffer, DMA JPEG ring, I2S ping-pong)
 //!   are statically allocated.
 //! * Camera outputs hardware-compressed JPEG via DMA; the CPU never touches
@@ -61,8 +61,8 @@ use esp_hal::timer::timg::TimerGroup;
 
 use srkos::hardware::probe_hardware;
 use srkos::ipc::COMMAND_BUS;
-use srkos::tasks::camera::DMA_RING_BUFFER;
 use srkos::tasks::audio::PING_PONG_STATE;
+use srkos::tasks::camera::DMA_RING_BUFFER;
 use srkos::tasks::http::{
     ConnectionGuard, RouteResult, RESPONSE_200_AUDIO, RESPONSE_200_HTML, RESPONSE_200_JSON,
     RESPONSE_200_MJPEG, RESPONSE_400, RESPONSE_404, RESPONSE_503,

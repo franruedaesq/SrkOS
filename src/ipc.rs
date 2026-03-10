@@ -160,13 +160,17 @@ mod tests {
         let bus: TestChannel<Command, 4> = Channel::new();
 
         for i in 0..4_u8 {
-            bus.try_send(Command::MoveServo(i, u16::from(i) * 45)).unwrap();
+            bus.try_send(Command::MoveServo(i, u16::from(i) * 45))
+                .unwrap();
         }
         for i in 0..4_u8 {
             let cmd = bus.try_receive().unwrap();
             assert_eq!(cmd, Command::MoveServo(i, u16::from(i) * 45));
         }
-        assert!(bus.try_receive().is_err(), "channel should be empty after drain");
+        assert!(
+            bus.try_receive().is_err(),
+            "channel should be empty after drain"
+        );
     }
 
     // ── Verify the global COMMAND_BUS static is well-formed ──────────────────

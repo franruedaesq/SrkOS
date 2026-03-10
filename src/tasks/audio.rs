@@ -127,6 +127,12 @@ pub struct PingPongState {
 /// to implement zero-copy audio streaming.
 pub static PING_PONG_STATE: PingPongState = PingPongState::new();
 
+impl Default for PingPongState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PingPongState {
     /// Create a new ping-pong state with DMA writing to Ping and no samples ready.
     pub const fn new() -> Self {
@@ -292,7 +298,10 @@ mod tests {
 
     #[test]
     fn i2s_frame_size_is_1kb() {
-        assert_eq!(I2S_FRAME_SIZE, 1024, "I2S frame must be exactly 1 024 bytes");
+        assert_eq!(
+            I2S_FRAME_SIZE, 1024,
+            "I2S frame must be exactly 1 024 bytes"
+        );
     }
 
     #[test]
@@ -341,8 +350,16 @@ mod tests {
     #[test]
     fn pingpong_state_starts_writing_to_ping() {
         let state = PingPongState::new();
-        assert_eq!(state.active(), PingPong::Ping, "DMA should start writing to Ping");
-        assert_eq!(state.ready(), PingPong::Pong, "Pong is ready (empty) at start");
+        assert_eq!(
+            state.active(),
+            PingPong::Ping,
+            "DMA should start writing to Ping"
+        );
+        assert_eq!(
+            state.ready(),
+            PingPong::Pong,
+            "Pong is ready (empty) at start"
+        );
         assert_eq!(state.ready_len(), 0);
     }
 
@@ -457,8 +474,7 @@ mod tests {
 
     #[test]
     fn handle_audio_command_stream_audio_false_stops_streaming() {
-        let state =
-            handle_audio_command(AudioState::Streaming, &Command::StreamAudio(false));
+        let state = handle_audio_command(AudioState::Streaming, &Command::StreamAudio(false));
         assert_eq!(state, AudioState::Idle);
     }
 
@@ -470,15 +486,13 @@ mod tests {
 
     #[test]
     fn handle_audio_command_stream_audio_true_on_streaming_stays_streaming() {
-        let state =
-            handle_audio_command(AudioState::Streaming, &Command::StreamAudio(true));
+        let state = handle_audio_command(AudioState::Streaming, &Command::StreamAudio(true));
         assert_eq!(state, AudioState::Streaming);
     }
 
     #[test]
     fn handle_audio_command_stream_video_preserves_state() {
-        let state =
-            handle_audio_command(AudioState::Streaming, &Command::StreamVideo(true));
+        let state = handle_audio_command(AudioState::Streaming, &Command::StreamVideo(true));
         assert_eq!(
             state,
             AudioState::Streaming,
@@ -497,8 +511,7 @@ mod tests {
 
     #[test]
     fn handle_audio_command_move_servo_preserves_state() {
-        let state =
-            handle_audio_command(AudioState::Streaming, &Command::MoveServo(0, 90));
+        let state = handle_audio_command(AudioState::Streaming, &Command::MoveServo(0, 90));
         assert_eq!(state, AudioState::Streaming);
     }
 
