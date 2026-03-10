@@ -7,6 +7,8 @@
 //! | [`ipc`]             | Global command bus and typed [`ipc::Command`] enum |
 //! | [`hardware`]        | Boot-time I2C hardware discovery                  |
 //! | [`tasks::oled`]     | SSD1306 OLED task and static framebuffer          |
+//! | [`tasks::http`]     | HTTP request parsing, routing, connection limiting |
+//! | [`tasks::espnow`]   | ESP-NOW frame payload parsing                     |
 //!
 //! # No-std / no-alloc design
 //!

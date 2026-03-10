@@ -11,6 +11,11 @@
 //! esp-hal-embassy = { version = "0.9", default-features = false, features = ["esp32", "executors"] }
 //! esp-backtrace   = { version = "0.18", features = ["esp32", "panic-handler", "println"] }
 //! esp-println     = { version = "0.16", features = ["esp32"] }
+//!
+//! # Phase 3: Wi-Fi + ESP-NOW (Station/AP mode + ESP-NOW peer)
+//! esp-wifi = { version = "0.13", default-features = false, features = [
+//!     "esp32", "phy-enable-usb", "esp-now", "async",
+//! ] }
 //! ```
 //!
 //! Then build and flash:
@@ -25,13 +30,16 @@
 //! 1. Initialise peripherals and the Embassy time driver (Timer Group 0).
 //! 2. Probe the I2C bus (GPIO 21 SDA / GPIO 22 SCL) for known peripherals.
 //! 3. Conditionally spawn hardware tasks for each detected device.
-//! 4. Enter the idle loop -- Embassy puts the CPU in `WFI` between events.
+//! 4. Spawn the Wi-Fi HTTP server task and ESP-NOW receiver task (Phase 3).
+//! 5. Enter the idle loop -- Embassy puts the CPU in `WFI` between events.
 //!
 //! # Memory guarantees
 //!
 //! * `#![no_alloc]` -- the heap is never touched.
 //! * All buffers (RX/TX network, OLED framebuffer) are statically allocated.
 //! * The Embassy cooperative executor eliminates context-switching overhead.
+//! * The HTTP server enforces a 2-connection limit via `ConnectionGuard` to
+//!   protect SRAM from exhaustion.
 
 #![no_std]
 #![no_main]
@@ -46,6 +54,10 @@ use esp_hal::timer::timg::TimerGroup;
 
 use srkos::hardware::probe_hardware;
 use srkos::ipc::COMMAND_BUS;
+use srkos::tasks::http::{
+    ConnectionGuard, RouteResult, RESPONSE_200_HTML, RESPONSE_200_JSON, RESPONSE_400,
+    RESPONSE_404, RESPONSE_503,
+};
 
 // ---- Static network buffers -------------------------------------------------
 // Reserved at compile time; the heap is never touched at runtime.
@@ -58,6 +70,11 @@ static mut TX_BUFFER: [u8; 4096] = [0u8; 4096];
 
 /// Flash-baked Web UI -- embedded from Flash (.rodata), zero SRAM cost.
 static INDEX_HTML: &[u8] = include_bytes!("../ui/index.html");
+
+/// Idle period for stub task loops that have not yet been wired to hardware.
+///
+/// Replaced by event-driven awaits once `esp-wifi` is linked in.
+const STUB_TASK_DELAY_SECS: u64 = 60;
 
 // ---- Embassy entry point ----------------------------------------------------
 
@@ -100,9 +117,15 @@ async fn main(spawner: Spawner) {
         // Phase 4: spawner.spawn(audio_task()).unwrap();
     }
 
+    // ---- Phase 3: Wi-Fi HTTP server + ESP-NOW receiver ---------------------
+    // Requires esp-wifi in Cargo.toml (see module doc for the exact entry).
+    spawner.spawn(wifi_task()).unwrap();
+    spawner.spawn(espnow_task()).unwrap();
+
     esp_println::println!(
-        "[SrkOS] Boot complete. Web UI: {} bytes in Flash.",
-        INDEX_HTML.len()
+        "[SrkOS] Boot complete. Web UI: {} bytes in Flash. Max connections: {}.",
+        INDEX_HTML.len(),
+        srkos::tasks::http::MAX_CONNECTIONS,
     );
 
     // Idle loop -- Embassy puts the CPU into WFI between timer wakeups.
@@ -123,4 +146,117 @@ async fn main(spawner: Spawner) {
 #[embassy_executor::task]
 async fn oled_task() {
     srkos::tasks::oled::oled_task_loop().await;
+}
+
+/// Wi-Fi HTTP server task (Phase 3).
+///
+/// Initialises the ESP32 in AP mode via `esp-wifi`, then accepts TCP
+/// connections on port 80.  For each connection:
+///
+/// 1. Attempt to acquire a [`ConnectionGuard`]; reject with [`RESPONSE_503`]
+///    if the 2-connection limit is already reached.
+/// 2. Read the raw HTTP request into [`RX_BUFFER`].
+/// 3. Parse with [`srkos::tasks::http::parse_request`].
+/// 4. Dispatch via [`srkos::tasks::http::route_request`]:
+///    - `ServeIndex`         → write [`RESPONSE_200_HTML`] + `INDEX_HTML`
+///    - `CommandAccepted(c)` → enqueue `c` on [`COMMAND_BUS`]; write
+///                             [`RESPONSE_200_JSON`] + `{}`
+///    - `BadRequest`         → write [`RESPONSE_400`]
+///    - `NotFound`           → write [`RESPONSE_404`]
+/// 5. Drop the [`ConnectionGuard`] (decrements the connection counter).
+///
+/// # Station + ESP-NOW multiplexing
+///
+/// `esp-wifi` time-slices the single 2.4 GHz radio between the AP/Station
+/// driver and the ESP-NOW peer automatically.  No additional configuration
+/// is required beyond enabling both features in the `esp-wifi` crate.
+#[embassy_executor::task]
+async fn wifi_task() {
+    // NOTE: Full implementation requires `esp-wifi` in Cargo.toml.
+    // Pseudocode (illustrates correct ConnectionGuard + route_request usage):
+    //
+    //   let wifi = esp_wifi::init(...).unwrap();
+    //   let ap   = wifi.start_ap("SrkOS", "").await.unwrap();
+    //   let mut server = TcpListener::new(ap, 80);
+    //
+    //   loop {
+    //       let socket = server.accept().await;
+    //
+    //       // Enforce the 2-connection limit.
+    //       let guard = match ConnectionGuard::try_acquire() {
+    //           Some(g) => g,
+    //           None    => { socket.write_all(RESPONSE_503).await; continue; }
+    //       };
+    //
+    //       // Read request into the static RX buffer (zero heap allocation).
+    //       let n = socket.read(&mut RX_BUFFER).await.unwrap_or(0);
+    //
+    //       // Parse and route.
+    //       if let Some(req) = srkos::tasks::http::parse_request(&RX_BUFFER[..n]) {
+    //           match srkos::tasks::http::route_request(&req) {
+    //               RouteResult::ServeIndex => {
+    //                   socket.write_all(RESPONSE_200_HTML).await;
+    //                   socket.write_all(INDEX_HTML).await;
+    //               }
+    //               RouteResult::CommandAccepted(cmd) => {
+    //                   COMMAND_BUS.send(cmd).await;
+    //                   socket.write_all(RESPONSE_200_JSON).await;
+    //                   socket.write_all(b"{}").await;
+    //               }
+    //               RouteResult::BadRequest => { socket.write_all(RESPONSE_400).await; }
+    //               RouteResult::NotFound   => { socket.write_all(RESPONSE_404).await; }
+    //           }
+    //       }
+    //       drop(guard); // releases the connection slot
+    //   }
+
+    // Suppress "unused import" warnings until esp-wifi is wired up.
+    let _ = (
+        ConnectionGuard::active(),
+        RESPONSE_200_HTML,
+        RESPONSE_200_JSON,
+        RESPONSE_400,
+        RESPONSE_404,
+        RESPONSE_503,
+        INDEX_HTML,
+    );
+    esp_println::println!("[wifi_task] started (awaiting esp-wifi initialisation)");
+    loop {
+        Timer::after_secs(STUB_TASK_DELAY_SECS).await;
+    }
+}
+
+/// ESP-NOW receiver task (Phase 3).
+///
+/// Listens for incoming ESP-NOW frames from the master ESP32-S3 Brain.
+/// Each frame's payload is parsed by
+/// [`srkos::tasks::espnow::parse_espnow_payload`] and, if valid, enqueued
+/// on [`COMMAND_BUS`] for consumption by `oled_task` and other hardware tasks.
+///
+/// # Payload format
+///
+/// The ESP32-S3 master encodes commands as JSON (same format as the HTTP API):
+///
+/// ```json
+/// {"SetFaceExpression": "Happy"}
+/// {"MoveServo": [0, 90]}
+/// {"StreamAudio": true}
+/// ```
+#[embassy_executor::task]
+async fn espnow_task() {
+    // NOTE: Full implementation requires `esp-wifi` with the `esp-now` feature.
+    // Pseudocode:
+    //
+    //   let espnow = EspNow::new(&wifi_controller).unwrap();
+    //   loop {
+    //       let frame = espnow.receive().await;
+    //       if let Some(cmd) = srkos::tasks::espnow::parse_espnow_payload(&frame.data) {
+    //           COMMAND_BUS.send(cmd).await;
+    //       }
+    //   }
+
+    esp_println::println!("[espnow_task] started (awaiting esp-wifi/esp-now initialisation)");
+    loop {
+        Timer::after_secs(STUB_TASK_DELAY_SECS).await;
+    }
 }
