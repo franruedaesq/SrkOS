@@ -18,18 +18,20 @@ required-features = ["firmware"]
 [features]
 default = []
 
-# Activates display, timer, and static-cell helpers that are safe to resolve
-# on the host.  The HAL crates that require the Xtensa LLVM backend
-# (esp-hal, esp-hal-embassy, esp-backtrace, esp-println) must be added
-# directly to Cargo.toml before running `cargo build --features firmware
-# --target xtensa-esp32-none-elf`.  See README / src/main.rs for the
-# exact versions to use.
+# Activates all hardware-abstraction and display helpers needed to compile
+# src/main.rs for xtensa-esp32-none-elf.  Run the firmware with:
+#   cargo run-fw                 (build + flash image + QEMU)
+#   cargo build-fw               (build only)
+# or the long forms:
+#   cargo run   --target xtensa-esp32-none-elf --features firmware --release
+#   cargo build --target xtensa-esp32-none-elf --features firmware --release
 firmware = [
     "dep:embassy-executor",
     "dep:embassy-time",
     "dep:ssd1306",
     "dep:static_cell",
     "dep:embedded-graphics",
+    "dep:esp-hal-embassy",
 ]
 
 # ---- Host-testable dependencies (no_std, no_alloc) -------------------------
@@ -48,12 +50,39 @@ serde-json-core   = { version = "0.6", default-features = false }
 
 # ---- Firmware-only optional dependencies ------------------------------------
 # These are optional and only enabled via the `firmware` feature.
-# They resolve safely on the host (no links-conflict, no arch-specific code).
-embassy-executor  = { version = "0.9",  default-features = false, optional = true }
-embassy-time      = { version = "0.5",  default-features = false, optional = true }
-ssd1306           = { version = "0.10", default-features = false, optional = true }
-static_cell       = { version = "2",    default-features = false, optional = true }
-embedded-graphics = { version = "0.8",  default-features = false, optional = true }
+# IMPORTANT – version alignment: embassy-time uses `links = "embassy-time-driver"`
+# which prevents two incompatible versions from coexisting in the same link unit.
+# esp-hal-embassy 0.9.x transitively requires embassy-executor 0.7 and
+# embassy-time 0.4, so our direct optional deps must match those same minor
+# versions to avoid a resolution conflict.  See the version note in the
+# [target.'cfg(target_arch = "xtensa")'.dependencies] section below.
+embassy-executor  = { version = "0.7",   default-features = false, optional = true }
+embassy-time      = { version = "0.4",   default-features = false, optional = true }
+ssd1306           = { version = "0.10",  default-features = false, optional = true }
+static_cell       = { version = "2",     default-features = false, optional = true }
+embedded-graphics = { version = "0.8",   default-features = false, optional = true }
+# Embassy support for the ESP32 HAL — provides the `#[esp_hal_embassy::main]`
+# macro, the embassy executor, and the embassy-time driver for Xtensa.
+# Kept in [dependencies] (not target-specific) so it can be referenced by the
+# `firmware` feature flag above.
+esp-hal-embassy   = { version = "0.9",   default-features = false, features = ["esp32", "executors"], optional = true }
+
+# ---- ESP32 HAL (Xtensa target only) -----------------------------------------
+# esp-hal and its companion crates are placed in a cfg-gated section so that
+# the host (x86_64) dependency resolver never encounters them.
+# This avoids version conflicts between the platform-specific pre-release
+# crates and the host-side embassy-sync 0.7 dependency.
+#
+# Version note: esp-hal-embassy 0.9.x requires the `__esp_hal_embassy` internal
+# feature of esp-hal which exists in 1.0.0-rc.0/rc.1 but was removed from the
+# stable 1.0.0 release.  Using `version = "1.0.0-rc.0"` ensures Cargo selects a
+# compatible pre-release and avoids that mismatch.
+#
+# Install the Xtensa Rust toolchain with:  cargo install espup && espup install
+[target.'cfg(target_arch = "xtensa")'.dependencies]
+esp-hal       = { version = "1.0.0-rc.0", features = ["esp32"] }
+esp-backtrace = { version = "0.18",  features = ["esp32", "panic-handler", "println"] }
+esp-println   = { version = "0.16",  features = ["esp32"] }
 
 # ---- Dev dependencies (host tests only) ------------------------------------
 [dev-dependencies]

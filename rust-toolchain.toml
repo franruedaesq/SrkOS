@@ -1,0 +1,17 @@
+# Espressif Rust toolchain — required for firmware builds targeting
+# xtensa-esp32-none-elf (Xtensa LX6 LLVM backend).
+#
+# Install with:
+#   cargo install espup
+#   espup install
+#   source ~/export-esp.sh   # (or equivalent for your shell)
+#
+# After installation, `cargo build-fw` and `cargo run-fw` will automatically
+# use this toolchain.  `cargo test` (host tests) should be run with:
+#   RUSTUP_TOOLCHAIN=stable cargo test
+# or by ensuring the stable toolchain is installed alongside:
+#   rustup toolchain install stable
+
+[toolchain]
+channel  = "esp"
+targets  = ["xtensa-esp32-none-elf"]

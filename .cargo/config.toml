@@ -3,8 +3,10 @@
 # `cargo test` continues to use the host target (no [build] target override).
 
 [target.xtensa-esp32-none-elf]
-# Flash and monitor via espflash when running `cargo run`.
-runner = "espflash flash --monitor"
+# Local emulation pipeline: ELF → espflash save-image → qemu-system-xtensa
+# Prerequisites: espup (Xtensa Rust toolchain), espflash >= 3, Espressif QEMU.
+# See scripts/run.sh for full installation instructions.
+runner = "scripts/run.sh"
 
 rustflags = [
     # ESP32 linker script bundled with esp-hal
@@ -12,3 +14,14 @@ rustflags = [
     # Preserve frame pointers for reliable stack unwinding / defmt backtraces
     "-C", "force-frame-pointers=yes",
 ]
+
+# ── Convenient cargo aliases ──────────────────────────────────────────────────
+# These shorten the long `--target … --features firmware` flags.
+
+[alias]
+# Full pipeline: build firmware → generate flash image → boot in QEMU
+run-fw   = "run   --target xtensa-esp32-none-elf --features firmware --release"
+# Firmware-only build (no emulation, fast compile check)
+build-fw = "build --target xtensa-esp32-none-elf --features firmware --release"
+# Type-check without linking (fastest feedback loop for firmware code)
+check-fw = "check --target xtensa-esp32-none-elf --features firmware"
