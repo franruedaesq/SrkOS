@@ -37,7 +37,7 @@ firmware = [
 # Async IPC channels -- zero-allocation, lock-free, no_std
 embassy-sync      = { version = "0.7", default-features = false }
 # Fixed-size collections that never heap-allocate
-heapless          = { version = "0.8", default-features = false }
+heapless          = { version = "0.8", default-features = false, features = ["serde"] }
 # Portable critical-section abstraction (impl chosen per-platform)
 critical-section  = { version = "1.1", default-features = false }
 # Embedded-HAL async abstraction used by the I2C hardware prober
