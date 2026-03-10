@@ -31,7 +31,7 @@
 //! {"StreamAudio": true}
 //! ```
 
-use crate::ipc::{Command, Expression};
+use crate::ipc::{Command, FaceMood};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use heapless::String;
 use serde::Deserialize;
@@ -173,17 +173,24 @@ pub enum ApiCommand {
 /// Returns `None` when:
 /// - `SetFaceExpression` contains an unrecognised string, or
 /// - `MoveServo` angle exceeds 180° (the valid range for a standard servo).
+///
+/// The legacy HTTP value `"Surprised"` is mapped to [`FaceMood::Excited`] for
+/// backward compatibility with existing web clients.
 pub fn api_command_to_command(api: ApiCommand) -> Option<Command> {
     Some(match api {
         ApiCommand::SetFaceExpression(expr) => {
-            let expression = match expr.as_str() {
-                "Happy" => Expression::Happy,
-                "Sad" => Expression::Sad,
-                "Neutral" => Expression::Neutral,
-                "Surprised" => Expression::Surprised,
+            let mood = match expr.as_str() {
+                "Happy" => FaceMood::Happy,
+                "Sad" => FaceMood::Sad,
+                "Neutral" => FaceMood::Neutral,
+                "Excited" => FaceMood::Excited,
+                "Mad" => FaceMood::Mad,
+                "Sleeping" => FaceMood::Sleeping,
+                // Legacy value sent by older HTTP clients.
+                "Surprised" => FaceMood::Excited,
                 _ => return None,
             };
-            Command::SetFaceExpression(expression)
+            Command::SetFaceExpression(mood)
         }
         ApiCommand::MoveServo((id, angle)) => {
             if angle > 180 {
@@ -315,7 +322,7 @@ pub fn route_request(req: &RequestParts<'_>) -> RouteResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ipc::{Command, Expression};
+    use crate::ipc::{Command, FaceMood};
 
     // ── find_body_start ───────────────────────────────────────────────────────
 
@@ -401,7 +408,7 @@ mod tests {
         let body = br#"{"SetFaceExpression":"Happy"}"#;
         assert_eq!(
             parse_api_body(body),
-            Some(Command::SetFaceExpression(Expression::Happy))
+            Some(Command::SetFaceExpression(FaceMood::Happy))
         );
     }
 
@@ -410,7 +417,7 @@ mod tests {
         let body = br#"{"SetFaceExpression":"Sad"}"#;
         assert_eq!(
             parse_api_body(body),
-            Some(Command::SetFaceExpression(Expression::Sad))
+            Some(Command::SetFaceExpression(FaceMood::Sad))
         );
     }
 
@@ -419,16 +426,44 @@ mod tests {
         let body = br#"{"SetFaceExpression":"Neutral"}"#;
         assert_eq!(
             parse_api_body(body),
-            Some(Command::SetFaceExpression(Expression::Neutral))
+            Some(Command::SetFaceExpression(FaceMood::Neutral))
         );
     }
 
     #[test]
     fn parse_api_body_set_face_surprised() {
+        // Legacy "Surprised" value is mapped to Excited for backward compatibility.
         let body = br#"{"SetFaceExpression":"Surprised"}"#;
         assert_eq!(
             parse_api_body(body),
-            Some(Command::SetFaceExpression(Expression::Surprised))
+            Some(Command::SetFaceExpression(FaceMood::Excited))
+        );
+    }
+
+    #[test]
+    fn parse_api_body_set_face_excited() {
+        let body = br#"{"SetFaceExpression":"Excited"}"#;
+        assert_eq!(
+            parse_api_body(body),
+            Some(Command::SetFaceExpression(FaceMood::Excited))
+        );
+    }
+
+    #[test]
+    fn parse_api_body_set_face_mad() {
+        let body = br#"{"SetFaceExpression":"Mad"}"#;
+        assert_eq!(
+            parse_api_body(body),
+            Some(Command::SetFaceExpression(FaceMood::Mad))
+        );
+    }
+
+    #[test]
+    fn parse_api_body_set_face_sleeping() {
+        let body = br#"{"SetFaceExpression":"Sleeping"}"#;
+        assert_eq!(
+            parse_api_body(body),
+            Some(Command::SetFaceExpression(FaceMood::Sleeping))
         );
     }
 
@@ -520,7 +555,7 @@ mod tests {
         };
         assert_eq!(
             route_request(&req),
-            RouteResult::CommandAccepted(Command::SetFaceExpression(Expression::Neutral))
+            RouteResult::CommandAccepted(Command::SetFaceExpression(FaceMood::Neutral))
         );
     }
 
@@ -600,7 +635,7 @@ mod tests {
         let req = parse_request(raw).unwrap();
         assert_eq!(
             route_request(&req),
-            RouteResult::CommandAccepted(Command::SetFaceExpression(Expression::Happy))
+            RouteResult::CommandAccepted(Command::SetFaceExpression(FaceMood::Happy))
         );
     }
 

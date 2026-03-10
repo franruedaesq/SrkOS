@@ -250,7 +250,7 @@ pub async fn camera_task_loop() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ipc::{Command, Expression};
+    use crate::ipc::{Command, FaceMood};
 
     // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -438,7 +438,7 @@ mod tests {
     fn handle_camera_command_set_face_preserves_state() {
         let state = handle_camera_command(
             CameraState::Idle,
-            &Command::SetFaceExpression(Expression::Happy),
+            &Command::SetFaceExpression(FaceMood::Happy),
         );
         assert_eq!(state, CameraState::Idle);
     }

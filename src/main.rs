@@ -56,6 +56,7 @@
 use embassy_executor::Spawner;
 use embassy_time::Timer;
 use esp_backtrace as _;
+use esp_hal::gpio::{Input, Pull};
 use esp_hal::i2c::master::I2c;
 use esp_hal::timer::timg::TimerGroup;
 
@@ -109,6 +110,11 @@ async fn main(spawner: Spawner) {
     // ---- Hardware auto-discovery -------------------------------------------
     let hw = probe_hardware(&mut i2c).await;
 
+    // ---- BOOT button (GPIO 0) — always spawned -----------------------------
+    // The BOOT button is present on every ESP32 board; no probe needed.
+    let boot_button = Input::new(peripherals.GPIO0, Pull::Up);
+    spawner.spawn(button_task(boot_button)).unwrap();
+
     if hw.oled {
         esp_println::println!("[SrkOS] SSD1306 OLED detected -- spawning oled_task");
         spawner.spawn(oled_task()).unwrap();
@@ -144,6 +150,20 @@ async fn main(spawner: Spawner) {
 }
 
 // ---- Tasks ------------------------------------------------------------------
+
+/// BOOT button task.
+///
+/// Reads GPIO 0 (the ESP32 BOOT button) and classifies gestures as either a
+/// single click or a long press.  On each gesture it sends the corresponding
+/// [`Command`] ([`Command::MenuNextItem`] or [`Command::MenuSelect`]) to
+/// [`COMMAND_BUS`] for the OLED task to consume.
+///
+/// The button task and the OLED task are deliberately decoupled: if the
+/// button task crashes the OLED face continues animating uninterrupted.
+#[embassy_executor::task]
+async fn button_task(boot_pin: Input<'static>) {
+    srkos::tasks::button::button_task_loop(boot_pin).await;
+}
 
 /// Camera DMA ring buffer task (Phase 4).
 ///

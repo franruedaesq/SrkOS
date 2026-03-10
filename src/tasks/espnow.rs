@@ -49,12 +49,12 @@ use crate::tasks::http::parse_api_body;
 ///
 /// ```rust
 /// use srkos::tasks::espnow::parse_espnow_payload;
-/// use srkos::ipc::{Command, Expression};
+/// use srkos::ipc::{Command, FaceMood};
 ///
 /// let payload = br#"{"SetFaceExpression":"Happy"}"#;
 /// assert_eq!(
 ///     parse_espnow_payload(payload),
-///     Some(Command::SetFaceExpression(Expression::Happy))
+///     Some(Command::SetFaceExpression(FaceMood::Happy))
 /// );
 /// ```
 pub fn parse_espnow_payload(data: &[u8]) -> Option<Command> {
@@ -66,14 +66,14 @@ pub fn parse_espnow_payload(data: &[u8]) -> Option<Command> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ipc::{Command, Expression};
+    use crate::ipc::{Command, FaceMood};
 
     #[test]
     fn parse_espnow_set_face_happy() {
         let payload = br#"{"SetFaceExpression":"Happy"}"#;
         assert_eq!(
             parse_espnow_payload(payload),
-            Some(Command::SetFaceExpression(Expression::Happy))
+            Some(Command::SetFaceExpression(FaceMood::Happy))
         );
     }
 
@@ -82,7 +82,7 @@ mod tests {
         let payload = br#"{"SetFaceExpression":"Sad"}"#;
         assert_eq!(
             parse_espnow_payload(payload),
-            Some(Command::SetFaceExpression(Expression::Sad))
+            Some(Command::SetFaceExpression(FaceMood::Sad))
         );
     }
 
@@ -91,16 +91,44 @@ mod tests {
         let payload = br#"{"SetFaceExpression":"Neutral"}"#;
         assert_eq!(
             parse_espnow_payload(payload),
-            Some(Command::SetFaceExpression(Expression::Neutral))
+            Some(Command::SetFaceExpression(FaceMood::Neutral))
         );
     }
 
     #[test]
     fn parse_espnow_set_face_surprised() {
+        // Legacy "Surprised" is mapped to Excited for backward compatibility.
         let payload = br#"{"SetFaceExpression":"Surprised"}"#;
         assert_eq!(
             parse_espnow_payload(payload),
-            Some(Command::SetFaceExpression(Expression::Surprised))
+            Some(Command::SetFaceExpression(FaceMood::Excited))
+        );
+    }
+
+    #[test]
+    fn parse_espnow_set_face_excited() {
+        let payload = br#"{"SetFaceExpression":"Excited"}"#;
+        assert_eq!(
+            parse_espnow_payload(payload),
+            Some(Command::SetFaceExpression(FaceMood::Excited))
+        );
+    }
+
+    #[test]
+    fn parse_espnow_set_face_mad() {
+        let payload = br#"{"SetFaceExpression":"Mad"}"#;
+        assert_eq!(
+            parse_espnow_payload(payload),
+            Some(Command::SetFaceExpression(FaceMood::Mad))
+        );
+    }
+
+    #[test]
+    fn parse_espnow_set_face_sleeping() {
+        let payload = br#"{"SetFaceExpression":"Sleeping"}"#;
+        assert_eq!(
+            parse_espnow_payload(payload),
+            Some(Command::SetFaceExpression(FaceMood::Sleeping))
         );
     }
 
@@ -149,19 +177,18 @@ mod tests {
 
     #[test]
     fn parse_espnow_all_face_expressions() {
-        let cases: &[(&[u8], Expression)] = &[
-            (br#"{"SetFaceExpression":"Happy"}"#, Expression::Happy),
-            (br#"{"SetFaceExpression":"Sad"}"#, Expression::Sad),
-            (br#"{"SetFaceExpression":"Neutral"}"#, Expression::Neutral),
-            (
-                br#"{"SetFaceExpression":"Surprised"}"#,
-                Expression::Surprised,
-            ),
+        let cases: &[(&[u8], FaceMood)] = &[
+            (br#"{"SetFaceExpression":"Happy"}"#, FaceMood::Happy),
+            (br#"{"SetFaceExpression":"Sad"}"#, FaceMood::Sad),
+            (br#"{"SetFaceExpression":"Neutral"}"#, FaceMood::Neutral),
+            (br#"{"SetFaceExpression":"Excited"}"#, FaceMood::Excited),
+            (br#"{"SetFaceExpression":"Mad"}"#, FaceMood::Mad),
+            (br#"{"SetFaceExpression":"Sleeping"}"#, FaceMood::Sleeping),
         ];
         for (payload, expected) in cases {
             assert_eq!(
                 parse_espnow_payload(payload),
-                Some(Command::SetFaceExpression(expected.clone()))
+                Some(Command::SetFaceExpression(*expected))
             );
         }
     }
