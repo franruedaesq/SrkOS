@@ -46,6 +46,8 @@ pub enum Command {
     MoveServo(u8, u16),
     /// Start (`true`) or stop (`false`) audio streaming.
     StreamAudio(bool),
+    /// Start (`true`) or stop (`false`) MJPEG video streaming.
+    StreamVideo(bool),
 }
 
 // ── Global command bus ────────────────────────────────────────────────────────

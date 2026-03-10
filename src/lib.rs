@@ -9,6 +9,8 @@
 //! | [`tasks::oled`]     | SSD1306 OLED task and static framebuffer          |
 //! | [`tasks::http`]     | HTTP request parsing, routing, connection limiting |
 //! | [`tasks::espnow`]   | ESP-NOW frame payload parsing                     |
+//! | [`tasks::camera`]   | OV2640 DMA ring buffer and zero-copy JPEG frames  |
+//! | [`tasks::audio`]    | I2S ping-pong buffers and zero-copy audio samples |
 //!
 //! # No-std / no-alloc design
 //!

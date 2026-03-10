@@ -8,7 +8,11 @@
 //! | [`oled`]      | SSD1306 OLED state machine and framebuffer              |
 //! | [`http`]      | HTTP request parsing, routing, and connection limiting  |
 //! | [`espnow`]    | ESP-NOW frame payload parsing                           |
+//! | [`camera`]    | OV2640 DMA ring buffer and zero-copy JPEG streaming     |
+//! | [`audio`]     | I2S ping-pong buffers and zero-copy audio streaming     |
 
+pub mod audio;
+pub mod camera;
 pub mod espnow;
 pub mod http;
 pub mod oled;
