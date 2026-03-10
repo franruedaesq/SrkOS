@@ -1,0 +1,75 @@
+[package]
+name = "srkos"
+version = "0.1.0"
+edition = "2021"
+authors = ["SrkOS Contributors"]
+description = "Memory-safe bare-metal async OS for ESP32 (520 KB SRAM, 4 MB Flash)"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/franruedaesq/SrkOS"
+
+# The firmware binary is only compiled when the `firmware` feature is active.
+# This allows `cargo test` to run entirely on the host without the Xtensa toolchain.
+[[bin]]
+name = "srkos"
+path = "src/main.rs"
+required-features = ["firmware"]
+
+# ---- Feature flags ----------------------------------------------------------
+[features]
+default = []
+
+# Activates display, timer, and static-cell helpers that are safe to resolve
+# on the host.  The HAL crates that require the Xtensa LLVM backend
+# (esp-hal, esp-hal-embassy, esp-backtrace, esp-println) must be added
+# directly to Cargo.toml before running `cargo build --features firmware
+# --target xtensa-esp32-none-elf`.  See README / src/main.rs for the
+# exact versions to use.
+firmware = [
+    "dep:embassy-executor",
+    "dep:embassy-time",
+    "dep:ssd1306",
+    "dep:static_cell",
+    "dep:embedded-graphics",
+]
+
+# ---- Host-testable dependencies (no_std, no_alloc) -------------------------
+[dependencies]
+# Async IPC channels -- zero-allocation, lock-free, no_std
+embassy-sync      = { version = "0.7", default-features = false }
+# Fixed-size collections that never heap-allocate
+heapless          = { version = "0.8", default-features = false }
+# Portable critical-section abstraction (impl chosen per-platform)
+critical-section  = { version = "1.1", default-features = false }
+# Embedded-HAL async abstraction used by the I2C hardware prober
+embedded-hal-async = { version = "1.0", default-features = false }
+# Serialization: no_std JSON for the REST API
+serde             = { version = "1", default-features = false, features = ["derive"] }
+serde-json-core   = { version = "0.6", default-features = false }
+
+# ---- Firmware-only optional dependencies ------------------------------------
+# These are optional and only enabled via the `firmware` feature.
+# They resolve safely on the host (no links-conflict, no arch-specific code).
+embassy-executor  = { version = "0.9",  default-features = false, optional = true }
+embassy-time      = { version = "0.5",  default-features = false, optional = true }
+ssd1306           = { version = "0.10", default-features = false, optional = true }
+static_cell       = { version = "2",    default-features = false, optional = true }
+embedded-graphics = { version = "0.8",  default-features = false, optional = true }
+
+# ---- Dev dependencies (host tests only) ------------------------------------
+[dev-dependencies]
+# Provide a std-backed critical-section so the host test binary can link the
+# CriticalSectionRawMutex used by the global COMMAND_BUS static.
+critical-section = { version = "1.1", features = ["std"] }
+# Minimal async executor: provides `futures::executor::block_on` for tests
+futures          = { version = "0.3", features = ["executor"] }
+
+# ---- Build profiles ---------------------------------------------------------
+[profile.dev]
+opt-level = "s"
+debug = true
+
+[profile.release]
+opt-level     = "s"
+lto           = "fat"
+codegen-units = 1
+debug         = false
