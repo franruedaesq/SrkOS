@@ -222,12 +222,10 @@ pub const RESPONSE_200_JSON: &[u8] =
     b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n";
 
 /// Complete `400 Bad Request` response (no body needed).
-pub const RESPONSE_400: &[u8] =
-    b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
+pub const RESPONSE_400: &[u8] = b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
 
 /// Complete `404 Not Found` response (no body needed).
-pub const RESPONSE_404: &[u8] =
-    b"HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n";
+pub const RESPONSE_404: &[u8] = b"HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n";
 
 /// Complete `503 Service Unavailable` response.
 ///
@@ -494,20 +492,32 @@ mod tests {
 
     #[test]
     fn route_get_root_serves_index() {
-        let req = RequestParts { method: Method::Get, path: "/", body: &[] };
+        let req = RequestParts {
+            method: Method::Get,
+            path: "/",
+            body: &[],
+        };
         assert_eq!(route_request(&req), RouteResult::ServeIndex);
     }
 
     #[test]
     fn route_get_index_html_serves_index() {
-        let req = RequestParts { method: Method::Get, path: "/index.html", body: &[] };
+        let req = RequestParts {
+            method: Method::Get,
+            path: "/index.html",
+            body: &[],
+        };
         assert_eq!(route_request(&req), RouteResult::ServeIndex);
     }
 
     #[test]
     fn route_post_api_command_set_face() {
         let body = br#"{"SetFaceExpression":"Neutral"}"#;
-        let req = RequestParts { method: Method::Post, path: "/api/command", body };
+        let req = RequestParts {
+            method: Method::Post,
+            path: "/api/command",
+            body,
+        };
         assert_eq!(
             route_request(&req),
             RouteResult::CommandAccepted(Command::SetFaceExpression(Expression::Neutral))
@@ -517,7 +527,11 @@ mod tests {
     #[test]
     fn route_post_api_command_move_servo() {
         let body = br#"{"MoveServo":[3,45]}"#;
-        let req = RequestParts { method: Method::Post, path: "/api/command", body };
+        let req = RequestParts {
+            method: Method::Post,
+            path: "/api/command",
+            body,
+        };
         assert_eq!(
             route_request(&req),
             RouteResult::CommandAccepted(Command::MoveServo(3, 45))
@@ -527,7 +541,11 @@ mod tests {
     #[test]
     fn route_post_api_command_stream_audio() {
         let body = br#"{"StreamAudio":true}"#;
-        let req = RequestParts { method: Method::Post, path: "/api/command", body };
+        let req = RequestParts {
+            method: Method::Post,
+            path: "/api/command",
+            body,
+        };
         assert_eq!(
             route_request(&req),
             RouteResult::CommandAccepted(Command::StreamAudio(true))
@@ -536,25 +554,41 @@ mod tests {
 
     #[test]
     fn route_post_api_command_invalid_json_returns_bad_request() {
-        let req = RequestParts { method: Method::Post, path: "/api/command", body: b"bad" };
+        let req = RequestParts {
+            method: Method::Post,
+            path: "/api/command",
+            body: b"bad",
+        };
         assert_eq!(route_request(&req), RouteResult::BadRequest);
     }
 
     #[test]
     fn route_post_api_command_empty_body_returns_bad_request() {
-        let req = RequestParts { method: Method::Post, path: "/api/command", body: &[] };
+        let req = RequestParts {
+            method: Method::Post,
+            path: "/api/command",
+            body: &[],
+        };
         assert_eq!(route_request(&req), RouteResult::BadRequest);
     }
 
     #[test]
     fn route_unknown_path_returns_not_found() {
-        let req = RequestParts { method: Method::Get, path: "/robots.txt", body: &[] };
+        let req = RequestParts {
+            method: Method::Get,
+            path: "/robots.txt",
+            body: &[],
+        };
         assert_eq!(route_request(&req), RouteResult::NotFound);
     }
 
     #[test]
     fn route_post_to_root_returns_not_found() {
-        let req = RequestParts { method: Method::Post, path: "/", body: &[] };
+        let req = RequestParts {
+            method: Method::Post,
+            path: "/",
+            body: &[],
+        };
         assert_eq!(route_request(&req), RouteResult::NotFound);
     }
 
@@ -617,7 +651,10 @@ mod tests {
         let g3 = ConnectionGuard::try_acquire();
         assert!(g1.is_some(), "first connection must be accepted");
         assert!(g2.is_some(), "second connection must be accepted");
-        assert!(g3.is_none(), "third connection must be rejected (limit = 2)");
+        assert!(
+            g3.is_none(),
+            "third connection must be rejected (limit = 2)"
+        );
         drop(g1);
         drop(g2);
         drop(g3);
@@ -630,7 +667,11 @@ mod tests {
             let _g = ConnectionGuard::try_acquire().unwrap();
             assert_eq!(ConnectionGuard::active(), 1);
         }
-        assert_eq!(ConnectionGuard::active(), 0, "counter must return to 0 after drop");
+        assert_eq!(
+            ConnectionGuard::active(),
+            0,
+            "counter must return to 0 after drop"
+        );
     }
 
     #[test]
@@ -638,10 +679,16 @@ mod tests {
         ACTIVE_CONNECTIONS.store(0, Ordering::SeqCst);
         let g1 = ConnectionGuard::try_acquire().unwrap();
         let g2 = ConnectionGuard::try_acquire().unwrap();
-        assert!(ConnectionGuard::try_acquire().is_none(), "limit must be enforced");
+        assert!(
+            ConnectionGuard::try_acquire().is_none(),
+            "limit must be enforced"
+        );
         drop(g1);
         let g3 = ConnectionGuard::try_acquire();
-        assert!(g3.is_some(), "a slot must become available after releasing a guard");
+        assert!(
+            g3.is_some(),
+            "a slot must become available after releasing a guard"
+        );
         drop(g2);
         drop(g3);
     }
@@ -730,27 +777,41 @@ mod tests {
 
     #[test]
     fn route_get_video_stream_serves_video_stream() {
-        let req = RequestParts { method: Method::Get, path: "/api/stream/video", body: &[] };
+        let req = RequestParts {
+            method: Method::Get,
+            path: "/api/stream/video",
+            body: &[],
+        };
         assert_eq!(route_request(&req), RouteResult::ServeVideoStream);
     }
 
     #[test]
     fn route_get_audio_stream_serves_audio_stream() {
-        let req = RequestParts { method: Method::Get, path: "/api/stream/audio", body: &[] };
+        let req = RequestParts {
+            method: Method::Get,
+            path: "/api/stream/audio",
+            body: &[],
+        };
         assert_eq!(route_request(&req), RouteResult::ServeAudioStream);
     }
 
     #[test]
     fn route_post_video_stream_returns_not_found() {
-        let req =
-            RequestParts { method: Method::Post, path: "/api/stream/video", body: &[] };
+        let req = RequestParts {
+            method: Method::Post,
+            path: "/api/stream/video",
+            body: &[],
+        };
         assert_eq!(route_request(&req), RouteResult::NotFound);
     }
 
     #[test]
     fn route_post_audio_stream_returns_not_found() {
-        let req =
-            RequestParts { method: Method::Post, path: "/api/stream/audio", body: &[] };
+        let req = RequestParts {
+            method: Method::Post,
+            path: "/api/stream/audio",
+            body: &[],
+        };
         assert_eq!(route_request(&req), RouteResult::NotFound);
     }
 
@@ -771,7 +832,11 @@ mod tests {
     #[test]
     fn route_post_api_command_stream_video() {
         let body = br#"{"StreamVideo":true}"#;
-        let req = RequestParts { method: Method::Post, path: "/api/command", body };
+        let req = RequestParts {
+            method: Method::Post,
+            path: "/api/command",
+            body,
+        };
         assert_eq!(
             route_request(&req),
             RouteResult::CommandAccepted(Command::StreamVideo(true))

@@ -88,6 +88,12 @@ pub struct DmaRingBuffer {
 /// static to implement zero-copy JPEG streaming.
 pub static DMA_RING_BUFFER: DmaRingBuffer = DmaRingBuffer::new();
 
+impl Default for DmaRingBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DmaRingBuffer {
     /// Create a new, empty ring-buffer metadata instance.
     ///
@@ -402,8 +408,7 @@ mod tests {
 
     #[test]
     fn handle_camera_command_stream_video_false_stops_streaming() {
-        let state =
-            handle_camera_command(CameraState::Streaming, &Command::StreamVideo(false));
+        let state = handle_camera_command(CameraState::Streaming, &Command::StreamVideo(false));
         assert_eq!(state, CameraState::Idle);
     }
 
@@ -415,15 +420,13 @@ mod tests {
 
     #[test]
     fn handle_camera_command_stream_video_true_on_streaming_stays_streaming() {
-        let state =
-            handle_camera_command(CameraState::Streaming, &Command::StreamVideo(true));
+        let state = handle_camera_command(CameraState::Streaming, &Command::StreamVideo(true));
         assert_eq!(state, CameraState::Streaming);
     }
 
     #[test]
     fn handle_camera_command_stream_audio_preserves_state() {
-        let state =
-            handle_camera_command(CameraState::Streaming, &Command::StreamAudio(true));
+        let state = handle_camera_command(CameraState::Streaming, &Command::StreamAudio(true));
         assert_eq!(
             state,
             CameraState::Streaming,
@@ -442,8 +445,7 @@ mod tests {
 
     #[test]
     fn handle_camera_command_move_servo_preserves_state() {
-        let state =
-            handle_camera_command(CameraState::Streaming, &Command::MoveServo(0, 90));
+        let state = handle_camera_command(CameraState::Streaming, &Command::MoveServo(0, 90));
         assert_eq!(state, CameraState::Streaming);
     }
 
