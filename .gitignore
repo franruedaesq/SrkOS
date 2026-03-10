@@ -1,0 +1,17 @@
+# Build artifacts and dependency cache
+/target/
+
+# Editor directories and files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# espflash / probe-rs
+*.bin
+*.elf
+*.map
+
+# macOS
+.DS_Store

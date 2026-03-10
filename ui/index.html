@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SrkOS – ESP32 Companion OS</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Courier New', Courier, monospace;
+            background: #0d1117;
+            color: #c9d1d9;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem 1rem;
+            min-height: 100vh;
+        }
+
+        h1 {
+            color: #58a6ff;
+            font-size: 2rem;
+            letter-spacing: 0.2rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .subtitle {
+            color: #8b949e;
+            font-size: 0.8rem;
+            margin-bottom: 1.5rem;
+        }
+
+        #status {
+            color: #3fb950;
+            font-size: 0.85rem;
+            margin-bottom: 1.5rem;
+            padding: 0.3rem 0.8rem;
+            border: 1px solid #3fb950;
+            border-radius: 99px;
+        }
+
+        #status.error { color: #f85149; border-color: #f85149; }
+
+        .card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 1.25rem 1.5rem;
+            margin: 0.75rem 0;
+            width: 100%;
+            max-width: 420px;
+        }
+
+        .card h2 {
+            color: #e6edf3;
+            font-size: 0.95rem;
+            text-transform: uppercase;
+            letter-spacing: 0.1rem;
+            margin-bottom: 0.85rem;
+            border-bottom: 1px solid #30363d;
+            padding-bottom: 0.5rem;
+        }
+
+        .btn-group { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+
+        button {
+            background: #21262d;
+            color: #c9d1d9;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 0.45rem 0.9rem;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 0.85rem;
+            transition: background 0.15s, border-color 0.15s;
+        }
+
+        button:hover { background: #30363d; border-color: #8b949e; }
+        button.primary { background: #238636; border-color: #2ea043; color: #fff; }
+        button.primary:hover { background: #2ea043; }
+        button.danger  { background: #da3633; border-color: #f85149; color: #fff; }
+        button.danger:hover  { background: #f85149; }
+
+        label { display: block; font-size: 0.85rem; color: #8b949e; margin-bottom: 0.4rem; }
+
+        input[type="number"],
+        input[type="range"] {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            color: #c9d1d9;
+            padding: 0.3rem 0.5rem;
+            font-family: inherit;
+            font-size: 0.85rem;
+        }
+
+        input[type="number"] { width: 5rem; }
+        input[type="range"]  { width: 100%; margin: 0.5rem 0; cursor: pointer; }
+
+        .servo-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
+        .angle-display { color: #58a6ff; font-size: 1rem; min-width: 3rem; text-align: right; }
+    </style>
+</head>
+<body>
+    <h1>SrkOS</h1>
+    <p class="subtitle">ESP32 Bare-Metal Companion OS</p>
+    <p id="status">● Connected</p>
+
+    <!-- Face Expression Card -->
+    <div class="card">
+        <h2>Face Expression</h2>
+        <div class="btn-group">
+            <button onclick="setFace('Happy')">😄 Happy</button>
+            <button onclick="setFace('Sad')">😢 Sad</button>
+            <button onclick="setFace('Neutral')">😐 Neutral</button>
+            <button onclick="setFace('Surprised')">😲 Surprised</button>
+        </div>
+    </div>
+
+    <!-- Servo Control Card -->
+    <div class="card">
+        <h2>Servo Control</h2>
+        <div class="servo-row">
+            <label for="servoId" style="margin:0">Servo ID</label>
+            <input id="servoId" type="number" value="0" min="0" max="7">
+        </div>
+        <label for="servoAngle">Angle</label>
+        <div style="display:flex; align-items:center; gap:0.5rem">
+            <input id="servoAngle" type="range" min="0" max="180" value="90">
+            <span id="angleVal" class="angle-display">90°</span>
+        </div>
+        <button class="primary" onclick="moveServo()" style="margin-top:0.75rem">Move Servo</button>
+    </div>
+
+    <!-- Audio Card -->
+    <div class="card">
+        <h2>Audio Stream</h2>
+        <div class="btn-group">
+            <button class="primary" onclick="setAudio(true)">▶ Start Stream</button>
+            <button class="danger"  onclick="setAudio(false)">■ Stop Stream</button>
+        </div>
+    </div>
+
+    <script>
+        const statusEl = document.getElementById('status');
+        const angleVal  = document.getElementById('angleVal');
+
+        document.getElementById('servoAngle').addEventListener('input', function () {
+            angleVal.textContent = this.value + '°';
+        });
+
+        /**
+         * POST a JSON command payload to the ESP32 REST endpoint.
+         * The endpoint routes the payload onto the COMMAND_BUS.
+         */
+        async function postCommand(payload) {
+            try {
+                const resp = await fetch('/api/command', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                if (resp.ok) {
+                    setStatus('OK', false);
+                } else {
+                    setStatus('Error ' + resp.status, true);
+                }
+            } catch (e) {
+                setStatus('Connection lost', true);
+            }
+        }
+
+        function setStatus(text, error) {
+            statusEl.textContent = (error ? '✖ ' : '● ') + text;
+            statusEl.className = error ? 'error' : '';
+        }
+
+        function setFace(expr)  { postCommand({ SetFaceExpression: expr }); }
+        function setAudio(on)   { postCommand({ StreamAudio: on }); }
+
+        function moveServo() {
+            const id    = parseInt(document.getElementById('servoId').value, 10);
+            const angle = parseInt(document.getElementById('servoAngle').value, 10);
+            postCommand({ MoveServo: [id, angle] });
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+# ESP32 Xtensa target configuration
+# Applied only when building with `--target xtensa-esp32-none-elf`.
+# `cargo test` continues to use the host target (no [build] target override).
+
+[target.xtensa-esp32-none-elf]
+# Flash and monitor via espflash when running `cargo run`.
+runner = "espflash flash --monitor"
+
+rustflags = [
+    # ESP32 linker script bundled with esp-hal
+    "-C", "link-arg=-Tlinkall.x",
+    # Preserve frame pointers for reliable stack unwinding / defmt backtraces
+    "-C", "force-frame-pointers=yes",
+]
