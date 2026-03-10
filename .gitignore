@@ -8,6 +8,9 @@
 *.swo
 *~
 
+# Backup files
+*.bak
+
 # espflash / probe-rs
 *.bin
 *.elf

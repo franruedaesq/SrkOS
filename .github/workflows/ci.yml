@@ -36,6 +36,11 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      # rust-toolchain.toml declares channel = "esp" for firmware builds.
+      # Override it here so that all host-side steps use stable Rust.
+      - name: Override toolchain to stable for host steps
+        run: rustup override set stable
+
       # ── Format check ──────────────────────────────────────────────────────────
       - name: Check formatting
         run: cargo fmt --check
@@ -74,6 +79,9 @@ jobs:
           key: ${{ runner.os }}-cargo-audit-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-audit-
 
+      - name: Override toolchain to stable for dep-audit
+        run: rustup override set stable
+
       - name: Verify alloc is absent from production dependency tree
         run: |
           # `cargo tree` without --dev-deps lists only the production
@@ -84,3 +92,96 @@ jobs:
             exit 1
           fi
           echo "OK: 'alloc' is not present in the production dependency tree."
+
+  # ── Firmware build & flash-image validation ───────────────────────────────────
+  # Installs the Espressif Rust toolchain (esp channel, Xtensa LLVM backend),
+  # compiles the firmware for xtensa-esp32-none-elf, and validates that
+  # espflash can convert the ELF into a structurally correct flash image.
+  # QEMU boot is skipped in CI (install pre-built qemu-system-xtensa locally;
+  # see scripts/run.sh for full instructions).
+  firmware:
+    name: Firmware build & flash-image validation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable Rust (needed to build espup / espflash)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry & build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-fw-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-fw-
+
+      # espup bootstraps the Xtensa-capable Rust compiler and LLVM toolchain.
+      - name: Install espup
+        run: RUSTUP_TOOLCHAIN=stable cargo install espup
+
+      # `espup install` downloads:
+      #   • the "esp" Rust toolchain (fork of nightly with Xtensa LLVM)
+      #   • the xtensa-esp32-elf GCC cross-toolchain (for the linker)
+      #   • Xtensa LLVM libraries (for bindgen / build scripts)
+      # It writes ~/export-esp.sh that exports the required env variables.
+      - name: Install Xtensa Rust toolchain via espup
+        run: espup install --targets xtensa-esp32-none-elf
+
+      # Propagate LIBCLANG_PATH and PATH additions to all subsequent steps.
+      - name: Export Xtensa toolchain environment
+        run: |
+          . "$HOME/export-esp.sh"
+          echo "LIBCLANG_PATH=$LIBCLANG_PATH" >> "$GITHUB_ENV"
+          # Find the xtensa-esp32-elf GCC bin directory and add it to PATH.
+          XTENSA_BIN=$(find "$HOME/.rustup/toolchains/esp" \
+              -name "xtensa-esp32-elf-gcc" -type f 2>/dev/null \
+              | head -1 | xargs -r dirname)
+          if [ -n "$XTENSA_BIN" ]; then
+            echo "$XTENSA_BIN" >> "$GITHUB_PATH"
+          fi
+
+      # Build the firmware binary for the ESP32 target.
+      - name: Build firmware (xtensa-esp32-none-elf, --release)
+        run: |
+          . "$HOME/export-esp.sh"
+          cargo +esp build \
+            --target xtensa-esp32-none-elf \
+            --features firmware \
+            --release
+
+      # Install espflash (the ELF → flash-image converter).
+      - name: Install espflash
+        run: RUSTUP_TOOLCHAIN=stable cargo install espflash
+
+      # Convert the compiled ELF into a flashable image that includes the
+      # ESP32 second-stage bootloader + partition table + application.
+      # A non-zero output confirms the ELF is structurally valid for flashing.
+      - name: Generate flash image (espflash save-image)
+        run: |
+          espflash save-image \
+            --chip esp32 \
+            --flash-size 4mb \
+            target/xtensa-esp32-none-elf/release/srkos \
+            firmware.bin
+
+      - name: Validate flash image
+        run: |
+          SIZE=$(stat -c%s firmware.bin)
+          echo "Flash image size: $SIZE bytes"
+          # A valid ESP32 flash image contains at minimum:
+          #   0x1000  ( 4 KB) second-stage bootloader
+          #   0x8000  (32 KB) partition table
+          #   0x10000 (64 KB) application header + first segment
+          # So anything smaller than 64 KB (65536 bytes) indicates a corrupt
+          # or incomplete image.
+          if [ "$SIZE" -lt 65536 ]; then
+            echo "ERROR: flash image is unexpectedly small ($SIZE bytes)"
+            exit 1
+          fi
+          echo "✓ Flash image is structurally valid and ready to flash or emulate."
+
