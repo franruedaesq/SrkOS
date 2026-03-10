@@ -36,7 +36,14 @@
 //! # Memory guarantees
 //!
 //! * `#![no_alloc]` -- the heap is never touched.
-//! * All buffers (RX/TX network, OLED framebuffer) are statically allocated.
+//! * All buffers (RX/TX network, OLED framebuffer, DMA JPEG ring, I2S ping-pong)
+//!   are statically allocated.
+//! * Camera outputs hardware-compressed JPEG via DMA; the CPU never touches
+//!   raw pixel data (`DMA_JPEG_RING` = 32 KB static).
+//! * I2S audio is routed via DMA into a 2 KB ping-pong buffer pair; the CPU
+//!   never copies sample data.
+//! * JPEG frames and audio samples are streamed to Wi-Fi via zero-copy pointers
+//!   (`DMA_RING_BUFFER.current_frame()` / `PING_PONG_STATE.ready_buffer()`).
 //! * The Embassy cooperative executor eliminates context-switching overhead.
 //! * The HTTP server enforces a 2-connection limit via `ConnectionGuard` to
 //!   protect SRAM from exhaustion.
@@ -54,9 +61,11 @@ use esp_hal::timer::timg::TimerGroup;
 
 use srkos::hardware::probe_hardware;
 use srkos::ipc::COMMAND_BUS;
+use srkos::tasks::camera::DMA_RING_BUFFER;
+use srkos::tasks::audio::PING_PONG_STATE;
 use srkos::tasks::http::{
-    ConnectionGuard, RouteResult, RESPONSE_200_HTML, RESPONSE_200_JSON, RESPONSE_400,
-    RESPONSE_404, RESPONSE_503,
+    ConnectionGuard, RouteResult, RESPONSE_200_AUDIO, RESPONSE_200_HTML, RESPONSE_200_JSON,
+    RESPONSE_200_MJPEG, RESPONSE_400, RESPONSE_404, RESPONSE_503,
 };
 
 // ---- Static network buffers -------------------------------------------------
@@ -108,13 +117,13 @@ async fn main(spawner: Spawner) {
     }
 
     if hw.camera {
-        esp_println::println!("[SrkOS] Camera (OV2640) detected");
-        // Phase 4: spawner.spawn(camera_task()).unwrap();
+        esp_println::println!("[SrkOS] Camera (OV2640) detected -- spawning camera_task");
+        spawner.spawn(camera_task()).unwrap();
     }
 
     if hw.audio {
-        esp_println::println!("[SrkOS] Audio codec detected");
-        // Phase 4: spawner.spawn(audio_task()).unwrap();
+        esp_println::println!("[SrkOS] Audio codec detected -- spawning audio_task");
+        spawner.spawn(audio_task()).unwrap();
     }
 
     // ---- Phase 3: Wi-Fi HTTP server + ESP-NOW receiver ---------------------
@@ -136,6 +145,42 @@ async fn main(spawner: Spawner) {
 
 // ---- Tasks ------------------------------------------------------------------
 
+/// Camera DMA ring buffer task (Phase 4).
+///
+/// Configures the OV2640 sensor via SCCB to output hardware-compressed JPEG
+/// directly into [`srkos::tasks::camera::DMA_JPEG_RING`].  The CPU never
+/// touches raw pixel data.
+///
+/// The task loop awaits [`Command::StreamVideo`] messages from [`COMMAND_BUS`]
+/// and delegates to [`srkos::tasks::camera::camera_task_loop`].
+///
+/// The Wi-Fi task streams the current JPEG frame via zero-copy:
+/// `socket.write_all(DMA_RING_BUFFER.current_frame()).await`.
+///
+/// Spawned only when the OV2640 is detected during the boot-time I2C probe.
+#[embassy_executor::task]
+async fn camera_task() {
+    srkos::tasks::camera::camera_task_loop().await;
+}
+
+/// I2S microphone ping-pong DMA task (Phase 4).
+///
+/// Enables the I2S peripheral and starts the DMA engine into the static
+/// ping-pong buffers ([`srkos::tasks::audio::I2S_PING`] /
+/// [`srkos::tasks::audio::I2S_PONG`]).  The CPU never copies sample data.
+///
+/// The task loop awaits [`Command::StreamAudio`] messages from [`COMMAND_BUS`]
+/// and delegates to [`srkos::tasks::audio::audio_task_loop`].
+///
+/// The Wi-Fi task streams the completed audio frame via zero-copy:
+/// `socket.write_all(PING_PONG_STATE.ready_buffer()).await`.
+///
+/// Spawned only when the I2S codec is detected during the boot-time I2C probe.
+#[embassy_executor::task]
+async fn audio_task() {
+    srkos::tasks::audio::audio_task_loop().await;
+}
+
 /// OLED display task.
 ///
 /// Awaits commands from [`COMMAND_BUS`] and drives the SSD1306 state machine.
@@ -148,7 +193,7 @@ async fn oled_task() {
     srkos::tasks::oled::oled_task_loop().await;
 }
 
-/// Wi-Fi HTTP server task (Phase 3).
+/// Wi-Fi HTTP server task (Phase 3 / Phase 4).
 ///
 /// Initialises the ESP32 in AP mode via `esp-wifi`, then accepts TCP
 /// connections on port 80.  For each connection:
@@ -161,6 +206,10 @@ async fn oled_task() {
 ///    - `ServeIndex`         → write [`RESPONSE_200_HTML`] + `INDEX_HTML`
 ///    - `CommandAccepted(c)` → enqueue `c` on [`COMMAND_BUS`]; write
 ///                             [`RESPONSE_200_JSON`] + `{}`
+///    - `ServeVideoStream`   → write [`RESPONSE_200_MJPEG`]; stream JPEG frames
+///                             from [`DMA_RING_BUFFER`] zero-copy until closed
+///    - `ServeAudioStream`   → write [`RESPONSE_200_AUDIO`]; stream PCM frames
+///                             from [`PING_PONG_STATE`] zero-copy until closed
 ///    - `BadRequest`         → write [`RESPONSE_400`]
 ///    - `NotFound`           → write [`RESPONSE_404`]
 /// 5. Drop the [`ConnectionGuard`] (decrements the connection counter).
@@ -203,6 +252,39 @@ async fn wifi_task() {
     //                   socket.write_all(RESPONSE_200_JSON).await;
     //                   socket.write_all(b"{}").await;
     //               }
+    //               RouteResult::ServeVideoStream => {
+    //                   // Phase 4: MJPEG zero-copy stream.
+    //                   // The DMA ring buffer pointer is passed directly to the
+    //                   // socket — no intermediate copy is ever made.
+    //                   socket.write_all(RESPONSE_200_MJPEG).await;
+    //                   loop {
+    //                       let frame = DMA_RING_BUFFER.current_frame();
+    //                       if frame.is_empty() {
+    //                           Timer::after_millis(10).await; // wait for first frame
+    //                           continue;
+    //                       }
+    //                       // MJPEG multipart boundary + frame headers.
+    //                       // Content-Length must be written as ASCII digits; use a
+    //                       // heapless::String or write each digit manually since
+    //                       // format!() is not available in no_alloc builds.
+    //                       socket.write_all(b"--frame\r\n").await;
+    //                       socket.write_all(b"Content-Type: image/jpeg\r\n").await;
+    //                       socket.write_all(b"\r\n").await;
+    //                       socket.write_all(frame).await; // zero-copy DMA pointer
+    //                       socket.write_all(b"\r\n").await;
+    //                   }
+    //               }
+    //               RouteResult::ServeAudioStream => {
+    //                   // Phase 4: raw PCM zero-copy stream.
+    //                   socket.write_all(RESPONSE_200_AUDIO).await;
+    //                   loop {
+    //                       let samples = PING_PONG_STATE.ready_buffer();
+    //                       if !samples.is_empty() {
+    //                           socket.write_all(samples).await; // zero-copy DMA pointer
+    //                       }
+    //                       Timer::after_millis(32).await; // ~32 ms per I2S frame
+    //                   }
+    //               }
     //               RouteResult::BadRequest => { socket.write_all(RESPONSE_400).await; }
     //               RouteResult::NotFound   => { socket.write_all(RESPONSE_404).await; }
     //           }
@@ -213,8 +295,12 @@ async fn wifi_task() {
     // Suppress "unused import" warnings until esp-wifi is wired up.
     let _ = (
         ConnectionGuard::active(),
+        DMA_RING_BUFFER.current_frame(),
+        PING_PONG_STATE.ready_buffer(),
         RESPONSE_200_HTML,
         RESPONSE_200_JSON,
+        RESPONSE_200_MJPEG,
+        RESPONSE_200_AUDIO,
         RESPONSE_400,
         RESPONSE_404,
         RESPONSE_503,

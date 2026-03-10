@@ -159,11 +159,13 @@ pub fn parse_request(raw: &[u8]) -> Option<RequestParts<'_>> {
 /// - `{"SetFaceExpression": "Happy" | "Sad" | "Neutral" | "Surprised"}`
 /// - `{"MoveServo": [servo_id, angle_degrees]}`  (angle 0–180)
 /// - `{"StreamAudio": true | false}`
+/// - `{"StreamVideo": true | false}`
 #[derive(Deserialize, Debug, PartialEq)]
 pub enum ApiCommand {
     SetFaceExpression(String<16>),
     MoveServo((u8, u16)),
     StreamAudio(bool),
+    StreamVideo(bool),
 }
 
 /// Convert an [`ApiCommand`] into a typed system [`Command`].
@@ -190,6 +192,7 @@ pub fn api_command_to_command(api: ApiCommand) -> Option<Command> {
             Command::MoveServo(id, angle)
         }
         ApiCommand::StreamAudio(on) => Command::StreamAudio(on),
+        ApiCommand::StreamVideo(on) => Command::StreamVideo(on),
     })
 }
 
@@ -233,6 +236,35 @@ pub const RESPONSE_404: &[u8] =
 pub const RESPONSE_503: &[u8] =
     b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n\r\n";
 
+/// `200 OK` header for MJPEG video streaming responses.
+///
+/// Write this header first, then write JPEG frames as multipart body parts:
+///
+/// ```text
+/// --frame\r\n
+/// Content-Type: image/jpeg\r\n
+/// Content-Length: <len>\r\n
+/// \r\n
+/// <JPEG bytes>
+/// \r\n
+/// ```
+///
+/// The frames are sourced directly from [`crate::tasks::camera::DMA_JPEG_RING`]
+/// via [`crate::tasks::camera::DMA_RING_BUFFER`] zero-copy pointer — no
+/// intermediate copy is made.
+pub const RESPONSE_200_MJPEG: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\nConnection: keep-alive\r\n\r\n";
+
+/// `200 OK` header for raw PCM audio streaming responses.
+///
+/// Write this header first, then stream audio frames directly from
+/// [`crate::tasks::audio::I2S_PING`] / [`crate::tasks::audio::I2S_PONG`]
+/// via [`crate::tasks::audio::PING_PONG_STATE`] zero-copy pointer — no
+/// intermediate copy is made.
+///
+/// The audio is 16-bit PCM, mono, little-endian at
+/// [`crate::tasks::audio::I2S_SAMPLE_RATE`] Hz.
+pub const RESPONSE_200_AUDIO: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Type: audio/l16; rate=16000; channels=1\r\nConnection: keep-alive\r\n\r\n";
+
 // ── Route dispatch ─────────────────────────────────────────────────────────────
 
 /// Outcome of routing a single HTTP request.
@@ -243,6 +275,8 @@ pub const RESPONSE_503: &[u8] =
 /// |----------------------|------------------------------------------------------|
 /// | `ServeIndex`         | Write [`RESPONSE_200_HTML`] then `INDEX_HTML`        |
 /// | `CommandAccepted(c)` | Enqueue `c` on `COMMAND_BUS`; write `RESPONSE_200_JSON` + `{}` |
+/// | `ServeVideoStream`   | Write [`RESPONSE_200_MJPEG`]; stream JPEG frames via zero-copy DMA pointer |
+/// | `ServeAudioStream`   | Write [`RESPONSE_200_AUDIO`]; stream PCM frames via zero-copy DMA pointer  |
 /// | `BadRequest`         | Write [`RESPONSE_400`]                               |
 /// | `NotFound`           | Write [`RESPONSE_404`]                               |
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -251,6 +285,10 @@ pub enum RouteResult {
     ServeIndex,
     /// A valid command was parsed; the caller should enqueue it on `COMMAND_BUS`.
     CommandAccepted(Command),
+    /// Stream MJPEG video frames from the DMA ring buffer (zero-copy).
+    ServeVideoStream,
+    /// Stream raw PCM audio samples from the ping-pong buffers (zero-copy).
+    ServeAudioStream,
     /// The `POST /api/command` body was not valid JSON or named an unknown command.
     BadRequest,
     /// No route matched.
@@ -264,6 +302,8 @@ pub enum RouteResult {
 pub fn route_request(req: &RequestParts<'_>) -> RouteResult {
     match (&req.method, req.path) {
         (Method::Get, "/") | (Method::Get, "/index.html") => RouteResult::ServeIndex,
+        (Method::Get, "/api/stream/video") => RouteResult::ServeVideoStream,
+        (Method::Get, "/api/stream/audio") => RouteResult::ServeAudioStream,
         (Method::Post, "/api/command") => match parse_api_body(req.body) {
             Some(cmd) => RouteResult::CommandAccepted(cmd),
             None => RouteResult::BadRequest,
@@ -551,6 +591,16 @@ mod tests {
     }
 
     #[test]
+    fn full_roundtrip_stream_video_start() {
+        let raw = b"POST /api/command HTTP/1.1\r\nContent-Type: application/json\r\n\r\n{\"StreamVideo\":true}";
+        let req = parse_request(raw).unwrap();
+        assert_eq!(
+            route_request(&req),
+            RouteResult::CommandAccepted(Command::StreamVideo(true))
+        );
+    }
+
+    #[test]
     fn full_roundtrip_get_root() {
         let raw = b"GET / HTTP/1.1\r\nHost: 192.168.4.1\r\n\r\n";
         let req = parse_request(raw).unwrap();
@@ -637,10 +687,34 @@ mod tests {
     }
 
     #[test]
+    fn response_200_mjpeg_starts_with_http_200() {
+        assert!(RESPONSE_200_MJPEG.starts_with(b"HTTP/1.1 200 OK"));
+    }
+
+    #[test]
+    fn response_200_mjpeg_contains_mjpeg_content_type() {
+        let text = core::str::from_utf8(RESPONSE_200_MJPEG).unwrap();
+        assert!(text.contains("multipart/x-mixed-replace"));
+    }
+
+    #[test]
+    fn response_200_audio_starts_with_http_200() {
+        assert!(RESPONSE_200_AUDIO.starts_with(b"HTTP/1.1 200 OK"));
+    }
+
+    #[test]
+    fn response_200_audio_contains_audio_l16_content_type() {
+        let text = core::str::from_utf8(RESPONSE_200_AUDIO).unwrap();
+        assert!(text.contains("audio/l16"));
+    }
+
+    #[test]
     fn all_responses_terminate_with_double_crlf() {
         for resp in &[
             RESPONSE_200_HTML,
             RESPONSE_200_JSON,
+            RESPONSE_200_MJPEG,
+            RESPONSE_200_AUDIO,
             RESPONSE_400,
             RESPONSE_404,
             RESPONSE_503,
@@ -650,5 +724,57 @@ mod tests {
                 "every response header must end with \\r\\n\\r\\n"
             );
         }
+    }
+
+    // ── Streaming route dispatch ──────────────────────────────────────────────
+
+    #[test]
+    fn route_get_video_stream_serves_video_stream() {
+        let req = RequestParts { method: Method::Get, path: "/api/stream/video", body: &[] };
+        assert_eq!(route_request(&req), RouteResult::ServeVideoStream);
+    }
+
+    #[test]
+    fn route_get_audio_stream_serves_audio_stream() {
+        let req = RequestParts { method: Method::Get, path: "/api/stream/audio", body: &[] };
+        assert_eq!(route_request(&req), RouteResult::ServeAudioStream);
+    }
+
+    #[test]
+    fn route_post_video_stream_returns_not_found() {
+        let req =
+            RequestParts { method: Method::Post, path: "/api/stream/video", body: &[] };
+        assert_eq!(route_request(&req), RouteResult::NotFound);
+    }
+
+    #[test]
+    fn route_post_audio_stream_returns_not_found() {
+        let req =
+            RequestParts { method: Method::Post, path: "/api/stream/audio", body: &[] };
+        assert_eq!(route_request(&req), RouteResult::NotFound);
+    }
+
+    // ── StreamVideo API command ───────────────────────────────────────────────
+
+    #[test]
+    fn parse_api_body_stream_video_start() {
+        let body = br#"{"StreamVideo":true}"#;
+        assert_eq!(parse_api_body(body), Some(Command::StreamVideo(true)));
+    }
+
+    #[test]
+    fn parse_api_body_stream_video_stop() {
+        let body = br#"{"StreamVideo":false}"#;
+        assert_eq!(parse_api_body(body), Some(Command::StreamVideo(false)));
+    }
+
+    #[test]
+    fn route_post_api_command_stream_video() {
+        let body = br#"{"StreamVideo":true}"#;
+        let req = RequestParts { method: Method::Post, path: "/api/command", body };
+        assert_eq!(
+            route_request(&req),
+            RouteResult::CommandAccepted(Command::StreamVideo(true))
+        );
     }
 }
