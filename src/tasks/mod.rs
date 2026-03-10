@@ -5,6 +5,7 @@
 //!
 //! | Module        | Description                                             |
 //! |---------------|---------------------------------------------------------|
+//! | [`button`]    | BOOT button GPIO reader and gesture classifier          |
 //! | [`oled`]      | SSD1306 OLED state machine and framebuffer              |
 //! | [`http`]      | HTTP request parsing, routing, and connection limiting  |
 //! | [`espnow`]    | ESP-NOW frame payload parsing                           |
@@ -12,6 +13,7 @@
 //! | [`audio`]     | I2S ping-pong buffers and zero-copy audio streaming     |
 
 pub mod audio;
+pub mod button;
 pub mod camera;
 pub mod espnow;
 pub mod http;

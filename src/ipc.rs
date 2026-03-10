@@ -9,7 +9,7 @@
 //!
 //! **Producer** (e.g. network task):
 //! ```rust,ignore
-//! COMMAND_BUS.send(Command::SetFaceExpression(Expression::Happy)).await;
+//! COMMAND_BUS.send(Command::SetFaceExpression(FaceMood::Happy)).await;
 //! ```
 //!
 //! **Consumer** (e.g. OLED task):
@@ -22,24 +22,29 @@ use embassy_sync::channel::Channel;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-/// Facial expression rendered on the SSD1306 OLED.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(test, derive(Copy))]
-pub enum Expression {
+/// Kawaii companion face mood rendered on the SSD1306 OLED.
+///
+/// Used by [`Command::SetFaceExpression`] and the OLED task state machine.
+/// HTTP clients that send the legacy `"Surprised"` value are mapped to
+/// [`FaceMood::Excited`] for backward compatibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FaceMood {
     Happy,
     Sad,
     Neutral,
-    Surprised,
+    Excited,
+    Mad,
+    Sleeping,
 }
 
 /// System-wide commands dispatched over the [`COMMAND_BUS`].
 ///
-/// Commands are produced by the network / ESP-NOW task and consumed
+/// Commands are produced by the network / ESP-NOW / button tasks and consumed
 /// asynchronously by hardware tasks (OLED, servos, audio).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
-    /// Change the OLED face expression.
-    SetFaceExpression(Expression),
+    /// Change the OLED face mood.
+    SetFaceExpression(FaceMood),
     /// Move a servo to the specified angle.
     ///
     /// Fields: `(servo_id, angle_degrees)` where angle is 0–180.
@@ -48,6 +53,13 @@ pub enum Command {
     StreamAudio(bool),
     /// Start (`true`) or stop (`false`) MJPEG video streaming.
     StreamVideo(bool),
+    /// Sent by the button task on a single click (press < 500 ms).
+    /// Moves the menu cursor to the next item, wrapping at the end.
+    MenuNextItem,
+    /// Sent by the button task on a long press (hold ≥ 2000 ms).
+    /// Opens the menu if closed, selects the highlighted item, or enters a
+    /// sub-menu.
+    MenuSelect,
 }
 
 // ── Global command bus ────────────────────────────────────────────────────────
@@ -76,17 +88,47 @@ mod tests {
     /// `NoopRawMutex` provides no actual synchronisation (safe for one thread).
     type TestChannel<T, const N: usize> = Channel<NoopRawMutex, T, N>;
 
+    // ── FaceMood variants ─────────────────────────────────────────────────────
+
+    #[test]
+    fn face_mood_all_variants_are_distinct() {
+        let moods = [
+            FaceMood::Happy,
+            FaceMood::Sad,
+            FaceMood::Neutral,
+            FaceMood::Excited,
+            FaceMood::Mad,
+            FaceMood::Sleeping,
+        ];
+        for (i, a) in moods.iter().enumerate() {
+            for (j, b) in moods.iter().enumerate() {
+                if i == j {
+                    assert_eq!(a, b);
+                } else {
+                    assert_ne!(a, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn face_mood_is_copy() {
+        let mood = FaceMood::Happy;
+        let _copy = mood; // Copy semantics: mood is still usable after this
+        let _also_copy = mood;
+    }
+
     // ── Command equality ──────────────────────────────────────────────────────
 
     #[test]
     fn command_set_face_expression_equality() {
         assert_eq!(
-            Command::SetFaceExpression(Expression::Happy),
-            Command::SetFaceExpression(Expression::Happy)
+            Command::SetFaceExpression(FaceMood::Happy),
+            Command::SetFaceExpression(FaceMood::Happy)
         );
         assert_ne!(
-            Command::SetFaceExpression(Expression::Happy),
-            Command::SetFaceExpression(Expression::Sad)
+            Command::SetFaceExpression(FaceMood::Happy),
+            Command::SetFaceExpression(FaceMood::Sad)
         );
     }
 
@@ -103,17 +145,40 @@ mod tests {
         assert_ne!(Command::StreamAudio(true), Command::StreamAudio(false));
     }
 
+    #[test]
+    fn command_menu_next_item_equality() {
+        assert_eq!(Command::MenuNextItem, Command::MenuNextItem);
+        assert_ne!(Command::MenuNextItem, Command::MenuSelect);
+    }
+
+    #[test]
+    fn command_menu_select_equality() {
+        assert_eq!(Command::MenuSelect, Command::MenuSelect);
+        assert_ne!(Command::MenuSelect, Command::MenuNextItem);
+    }
+
     // ── Channel send / receive ────────────────────────────────────────────────
 
     #[test]
     fn channel_send_receive_roundtrip() {
         let bus: TestChannel<Command, 8> = Channel::new();
 
-        bus.try_send(Command::SetFaceExpression(Expression::Happy))
+        bus.try_send(Command::SetFaceExpression(FaceMood::Happy))
             .expect("channel should accept a message when not full");
 
         let received = bus.try_receive().expect("channel should contain a message");
-        assert_eq!(received, Command::SetFaceExpression(Expression::Happy));
+        assert_eq!(received, Command::SetFaceExpression(FaceMood::Happy));
+    }
+
+    #[test]
+    fn channel_send_receive_menu_commands() {
+        let bus: TestChannel<Command, 8> = Channel::new();
+
+        bus.try_send(Command::MenuNextItem).unwrap();
+        bus.try_send(Command::MenuSelect).unwrap();
+
+        assert_eq!(bus.try_receive().unwrap(), Command::MenuNextItem);
+        assert_eq!(bus.try_receive().unwrap(), Command::MenuSelect);
     }
 
     #[test]
